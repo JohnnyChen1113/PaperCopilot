@@ -4,7 +4,19 @@
   "outputDirectory": "apps/web/dist",
   "rewrites": [
     {
-      "source": "/((?!api/).*)",
+      "source": "/PaperCopilot",
+      "destination": "/"
+    },
+    {
+      "source": "/PaperCopilot/api/:path*",
+      "destination": "/api/:path*"
+    },
+    {
+      "source": "/PaperCopilot/:path*",
+      "destination": "/:path*"
+    },
+    {
+      "source": "/PaperCopilot/",
       "destination": "/"
     }
   ]

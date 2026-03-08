@@ -26,6 +26,11 @@ const apiKeysStorageKey = 'papercopilot:api-keys';
 const selectedModelsStorageKey = 'papercopilot:selected-models';
 const configuredModelsStorageKey = 'papercopilot:configured-models';
 const chatSessionsStorageKey = 'papercopilot:chat-sessions';
+const apiBasePath = import.meta.env.VITE_API_BASE_PATH || '/api/';
+
+function withApiPath(path: string) {
+  return `${apiBasePath}${path.replace(/^\/?api\//, '')}`;
+}
 
 const defaultSettings: SettingsState = {
   provider: 'siliconflow',
@@ -323,7 +328,7 @@ function App() {
     }
 
     try {
-      const response = await fetch('/api/title', {
+      const response = await fetch(withApiPath('/api/title'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -426,7 +431,7 @@ function App() {
         maxTokens: settings.maxTokens,
       };
 
-      const response = await fetch('/api/chat', {
+      const response = await fetch(withApiPath('/api/chat'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -483,7 +488,7 @@ function App() {
     setModelFetchError(null);
 
     try {
-      const response = await fetch('/api/models', {
+      const response = await fetch(withApiPath('/api/models'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
