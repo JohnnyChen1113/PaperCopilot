@@ -1,0 +1,16 @@
+{
+  "name": "papercopilot",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "bun run --cwd apps/web dev",
+    "dev:proxy": "bun run --cwd apps/proxy dev",
+    "dev": "bun run dev:web & bun run dev:proxy",
+    "build": "bun run build:web & bun run build:proxy",
+    "build:web": "bun run --cwd apps/web build",
+    "build:proxy": "bun run --cwd apps/proxy build"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "installCommand": "bun install",
+  "buildCommand": "bun run build:web",
+  "outputDirectory": "apps/web/dist",
+  "rewrites": [
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/"
+    }
+  ]
+}
