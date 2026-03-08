@@ -1,7 +1,9 @@
-import { handle } from 'hono/vercel'
+import { Hono } from 'hono'
 
 import { app } from '../apps/proxy/src/app'
 
-export const runtime = 'nodejs'
+const apiApp = new Hono()
 
-export default handle(app)
+apiApp.route('/api', app)
+
+export default apiApp
