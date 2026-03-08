@@ -5,6 +5,10 @@
     "apps/*",
     "packages/*"
   ],
+  "dependencies": {
+    "hono": "^4.12.5",
+    "zod": "^3.25.76"
+  },
   "scripts": {
     "dev:web": "bun run --cwd apps/web dev",
     "dev:proxy": "bun run --cwd apps/proxy dev",

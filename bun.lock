@@ -4,6 +4,10 @@
   "workspaces": {
     "": {
       "name": "papercopilot-monorepo",
+      "dependencies": {
+        "hono": "^4.12.5",
+        "zod": "^3.25.76",
+      },
     },
     "apps/proxy": {
       "name": "@papercopilot/proxy",
