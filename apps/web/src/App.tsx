@@ -48,10 +48,24 @@ const chatSessionsStorageKey = 'papercopilot:chat-sessions';
 const highlightsStorageKey = 'papercopilot:highlights';
 const notesStorageKey = 'papercopilot:notes';
 const highlightColorStorageKey = 'papercopilot:highlight-color';
-const apiBasePath = import.meta.env.VITE_API_BASE_PATH || '/api/';
+const apiBasePath = '/api/';
 
 function withApiPath(path: string) {
   return `${apiBasePath}${path.replace(/^\/?api\//, '')}`;
+}
+
+async function parseJsonResponse<T>(response: Response): Promise<T> {
+  const text = await response.text();
+
+  if (!text.trim()) {
+    throw new Error('服务端返回了空响应。');
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(text.slice(0, 240) || '服务端返回了无法解析的响应。');
+  }
 }
 
 const defaultSettings: SettingsState = {
@@ -448,7 +462,7 @@ function App() {
         return;
       }
 
-      const result = (await response.json()) as { title?: string };
+      const result = await parseJsonResponse<{ title?: string }>(response);
       const nextTitle = result.title?.trim();
 
       if (!nextTitle) {
@@ -702,7 +716,7 @@ function App() {
         }),
       });
 
-      const result = (await response.json()) as { models?: string[]; error?: string; details?: string };
+      const result = await parseJsonResponse<{ models?: string[]; error?: string; details?: string }>(response);
 
       if (!response.ok) {
         throw new Error(result.details || result.error || '加载模型列表失败。');
