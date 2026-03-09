@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import rehypeKatex from 'rehype-katex';
 import remarkMath from 'remark-math';
-import { BookText, Highlighter, History, Languages, Lightbulb, Loader2, NotebookPen, Send } from 'lucide-react';
+import { BookText, Eraser, Highlighter, History, Languages, Lightbulb, Loader2, NotebookPen, Send, Square, Trash2 } from 'lucide-react';
 import { paperQuickActions, selectionMenuActions, selectionQuickActions } from '../../lib/chatActions';
 import type { ChatMessage, ChatSession } from '../../types';
 import type { HighlightColor } from '../reader/PdfViewer';
@@ -34,7 +35,9 @@ interface ChatPanelProps {
   chatStatus: 'idle' | 'streaming' | 'error';
   chatError: string | null;
   highlightColor: HighlightColor;
+  isSelectionHighlighted: boolean;
   onSendMessage: (content: string) => void;
+  onStopStreaming: () => void;
   onQuickAction: (actionPrompt: string) => void;
   onSelectionAction: (actionId: string) => void;
   onHighlightColorChange: (color: HighlightColor) => void;
@@ -62,7 +65,9 @@ export function ChatPanel({
   chatStatus,
   chatError,
   highlightColor,
+  isSelectionHighlighted,
   onSendMessage,
+  onStopStreaming,
   onQuickAction,
   onSelectionAction,
   onHighlightColorChange,
@@ -93,6 +98,10 @@ export function ChatPanel({
   const canSend =
     inputValue.trim().length > 0 && !isStreaming && hasValidSettings && isFileLoaded;
   const canSaveNote = Boolean(selection && noteDraft.trim().length > 0);
+  const renderedMessages = chatMessages.map((message) => ({
+    ...message,
+    content: normalizeMarkdownForRender(message.content),
+  }));
 
   function handleSend() {
     if (!canSend) return;
@@ -267,8 +276,8 @@ export function ChatPanel({
 
           {/* Messages list */}
           {activeTab === 'assistant' &&
-            chatMessages.map((msg, index) => {
-            const isLast = index === chatMessages.length - 1;
+            renderedMessages.map((msg, index) => {
+            const isLast = index === renderedMessages.length - 1;
             if (msg.role === 'user') {
               return (
                 <div key={msg.id} className="flex justify-end">
@@ -292,7 +301,7 @@ export function ChatPanel({
             return (
               <div key={msg.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="markdown-content">
-                  <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
                     {msg.content}
                   </ReactMarkdown>
                 </div>
@@ -330,8 +339,8 @@ export function ChatPanel({
                 {note.selection.selectedText}
               </blockquote>
               <div className="markdown-content mt-3">
-                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                  {note.content}
+                <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
+                  {normalizeMarkdownForRender(note.content)}
                 </ReactMarkdown>
               </div>
             </button>
@@ -411,10 +420,14 @@ export function ChatPanel({
                       key={action.id}
                       type="button"
                       onClick={() => onSelectionAction(action.id)}
-                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
+                      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                        action.id === 'highlight' && isSelectionHighlighted
+                          ? 'border-rose-200 bg-rose-50 text-rose-700 hover:border-rose-300 hover:text-rose-800'
+                          : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-900'
+                      }`}
                     >
-                      <SelectionActionIcon actionId={action.id} />
-                      {action.label}
+                      <SelectionActionIcon actionId={action.id} isActive={action.id === 'highlight' && isSelectionHighlighted} />
+                      {action.id === 'highlight' && isSelectionHighlighted ? '删除高亮' : action.label}
                     </button>
                   ))}
                 </div>
@@ -462,14 +475,23 @@ export function ChatPanel({
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
               />
               <button
-                onClick={handleSend}
-                disabled={!canSend}
-                aria-label="Send message"
-                className="shrink-0 flex h-[38px] w-[38px] items-center justify-center rounded-md bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                onClick={isStreaming ? onStopStreaming : handleSend}
+                disabled={isStreaming ? false : !canSend}
+                aria-label={isStreaming ? 'Stop generation' : 'Send message'}
+                className={`shrink-0 flex h-[38px] w-[38px] items-center justify-center rounded-md text-white transition-colors ${
+                  isStreaming
+                    ? 'bg-rose-500 hover:bg-rose-600'
+                    : 'bg-blue-600 hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300'
+                }`}
               >
-                <Send className="h-4 w-4" />
+                {isStreaming ? <Square className="h-4 w-4" /> : <Send className="h-4 w-4" />}
               </button>
             </div>
+            {isStreaming && (
+              <p className="text-xs text-slate-400">
+                正在生成，点击右侧停止按钮可中断本轮回答。
+              </p>
+            )}
           </div>
         ) : (
           <div className="space-y-2">
@@ -536,14 +558,16 @@ function EmptyState({
   );
 }
 
-function SelectionActionIcon({ actionId }: { actionId: string }) {
+function SelectionActionIcon({ actionId, isActive = false }: { actionId: string; isActive?: boolean }) {
   switch (actionId) {
     case 'ask-ai':
       return <Lightbulb className="h-3.5 w-3.5 text-amber-500" />;
     case 'translate-zh':
       return <Languages className="h-3.5 w-3.5 text-emerald-500" />;
     case 'highlight':
-      return <Highlighter className="h-3.5 w-3.5 text-amber-600" />;
+      return isActive ? <Trash2 className="h-3.5 w-3.5 text-rose-600" /> : <Highlighter className="h-3.5 w-3.5 text-amber-600" />;
+    case 'erase-highlight':
+      return <Eraser className="h-3.5 w-3.5 text-rose-500" />;
     case 'note':
       return <NotebookPen className="h-3.5 w-3.5 text-violet-500" />;
     default:
@@ -572,3 +596,47 @@ const highlightColorOptions: Array<{
   { id: 'blue', label: '蓝色', className: 'bg-sky-300' },
   { id: 'pink', label: '粉色', className: 'bg-pink-300' },
 ];
+
+function normalizeMarkdownForRender(content: string) {
+  if (!content) {
+    return content;
+  }
+
+  const next = normalizeCollapsedTables(content);
+  const lines = next.split('\n');
+
+  return lines
+    .map((line) => {
+      if (isTableLikeLine(line)) {
+        return line.trimEnd();
+      }
+
+      return line.replace(/<br\s*\/?>/gi, '  \n').trimEnd();
+    })
+    .join('\n');
+}
+
+function looksLikeCollapsedTable(line: string) {
+  return /\|/.test(line) && /\|\s*:?-{3,}/.test(line) && /\s\|\s\|\s/.test(line);
+}
+
+function expandCollapsedTableLine(line: string) {
+  return line.replace(/\s\|\s\|\s/g, ' |\n| ').split('\n');
+}
+
+function normalizeCollapsedTables(content: string) {
+  return content
+    .split('\n')
+    .flatMap((line) => {
+      if (!looksLikeCollapsedTable(line)) {
+        return [line];
+      }
+
+      return expandCollapsedTableLine(line);
+    })
+    .join('\n');
+}
+
+function isTableLikeLine(line: string) {
+  return /^\s*\|.*\|\s*$/.test(line);
+}

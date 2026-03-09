@@ -80,7 +80,7 @@ export function SplitPane({ left, right, className }: SplitPaneProps) {
 
       <div
         className={cn(
-          'group relative shrink-0 bg-transparent transition-[width] duration-200',
+          'group relative shrink-0 bg-transparent',
           isCollapsed ? 'w-4' : 'w-4',
         )}
       >
@@ -131,7 +131,7 @@ export function SplitPane({ left, right, className }: SplitPaneProps) {
 
       <div
         style={{ width: isCollapsed ? collapsedRightWidth : rightWidth }}
-        className="relative shrink-0 overflow-hidden border-l border-slate-200 bg-slate-50 shadow-inner transition-[width] duration-200"
+        className="relative shrink-0 overflow-hidden border-l border-slate-200 bg-slate-50 shadow-inner"
       >
         {isCollapsed ? (
           <button

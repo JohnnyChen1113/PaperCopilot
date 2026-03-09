@@ -18,6 +18,10 @@ export const selectionMenuActions: QuickAction[] = [
     label: '高亮',
   },
   {
+    id: 'erase-highlight',
+    label: '橡皮擦',
+  },
+  {
     id: 'note',
     label: '记笔记',
   },

@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { TopBar } from './components/layout/TopBar';
 import { SplitPane } from './components/layout/SplitPane';
 import {
@@ -341,6 +341,7 @@ function App() {
   const [highlights, setHighlights] = useState<HighlightRecord[]>(loadHighlights);
   const [notes, setNotes] = useState<NoteRecord[]>(loadNotes);
   const [highlightColor, setHighlightColor] = useState<HighlightColor>(loadHighlightColor);
+  const activeChatAbortRef = useRef<AbortController | null>(null);
 
   // Save non-key settings to papercopilot:model-settings (strip apiKey)
   useEffect(() => {
@@ -579,6 +580,8 @@ function App() {
     }));
 
     try {
+      const abortController = new AbortController();
+      activeChatAbortRef.current = abortController;
       const payload = {
         messages: messagesWithUser.map(m => ({ role: m.role, content: m.content })),
         systemPrompt,
@@ -593,6 +596,7 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        signal: abortController.signal,
       });
 
       if (!response.ok || !response.body) {
@@ -619,14 +623,33 @@ function App() {
       }
 
       setChatStatus('idle');
+      activeChatAbortRef.current = null;
       const completedMessages = allMessages.map((message) =>
         message.id === assistantMsg.id ? { ...message, content: accumulated } : message,
       );
       void generateSessionTitle(targetSession.id, completedMessages);
     } catch (error) {
+      activeChatAbortRef.current = null;
+      if (error instanceof Error && error.name === 'AbortError') {
+        setChatStatus('idle');
+        replaceSession(targetSession.id, (session) => ({
+          ...session,
+          messages: session.messages.filter(
+            (message) => message.id !== assistantMsg.id || message.content.trim().length > 0,
+          ),
+          updatedAt: Date.now(),
+        }));
+        return;
+      }
+
       setChatStatus('error');
       setChatError(error instanceof Error ? error.message : 'Unexpected error.');
     }
+  }
+
+  function handleStopStreaming() {
+    activeChatAbortRef.current?.abort();
+    activeChatAbortRef.current = null;
   }
 
   function handleQuickAction(actionPrompt: string) {
@@ -678,6 +701,50 @@ function App() {
     });
   }
 
+  function removeHighlight(nextSelection: PdfSelectionPayload) {
+    if (!file) {
+      return;
+    }
+
+    const fingerprint = buildSelectionFingerprint(nextSelection);
+    setHighlights((current) =>
+      current.filter(
+        (item) =>
+          item.paperName !== file.name ||
+          buildStoredHighlightFingerprint(item) !== fingerprint,
+      ),
+    );
+  }
+
+  function eraseHighlightsInSelection(nextSelection: PdfSelectionPayload) {
+    if (!file) {
+      return;
+    }
+
+    setHighlights((current) =>
+      current.filter((item) => {
+        if (item.paperName !== file.name || item.pageNumber !== nextSelection.pageNumber) {
+          return true;
+        }
+
+        return !item.rects.some((rect) =>
+          nextSelection.normalizedRects.some((selectionRect) =>
+            rectsIntersect(rect, selectionRect),
+          ),
+        );
+      }),
+    );
+  }
+
+  const selectionHasHighlight = Boolean(
+    file &&
+      selection &&
+      currentPaperHighlights.some(
+        (highlight) =>
+          buildStoredHighlightFingerprint(highlight) === buildSelectionFingerprint(selection),
+      ),
+  );
+
   function handleSelectionAction(actionId: string) {
     if (!selection) {
       return;
@@ -692,7 +759,15 @@ function App() {
         void handleChat('请把这段内容翻译成中文，并尽量准确保留专业术语原文。');
         return;
       case 'highlight':
-        saveHighlight(selection, highlightColor);
+        if (selectionHasHighlight) {
+          removeHighlight(selection);
+        } else {
+          saveHighlight(selection, highlightColor);
+        }
+        setSelection(null);
+        return;
+      case 'erase-highlight':
+        eraseHighlightsInSelection(selection);
         setSelection(null);
         return;
       case 'note':
@@ -973,7 +1048,9 @@ function App() {
             chatMessages={chatMessages}
             chatStatus={chatStatus}
             chatError={chatError}
+            isSelectionHighlighted={selectionHasHighlight}
             onSendMessage={(content) => { void handleChat(content); }}
+            onStopStreaming={handleStopStreaming}
             onQuickAction={(prompt) => { handleQuickAction(prompt); }}
             onSelectionAction={handleSelectionAction}
             highlightColor={highlightColor}
@@ -1040,4 +1117,21 @@ function normalizeSelectionText(value: string) {
 function buildStoredHighlightFingerprint(highlight: HighlightRecord) {
   const firstRect = highlight.rects[0];
   return `${highlight.pageNumber}:${normalizeSelectionText(highlight.selectedText)}:${Math.round((firstRect?.top ?? 0) * 1000)}:${Math.round((firstRect?.left ?? 0) * 1000)}`;
+}
+
+function rectsIntersect(
+  left: { top: number; left: number; width: number; height: number },
+  right: { top: number; left: number; width: number; height: number },
+) {
+  const leftRight = left.left + left.width;
+  const leftBottom = left.top + left.height;
+  const rightRight = right.left + right.width;
+  const rightBottom = right.top + right.height;
+
+  return !(
+    leftRight <= right.left ||
+    rightRight <= left.left ||
+    leftBottom <= right.top ||
+    rightBottom <= left.top
+  );
 }

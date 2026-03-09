@@ -55,7 +55,6 @@ interface PdfViewerProps {
 export function PdfViewer({
   file,
   contextCharBudget,
-  selection,
   highlightedSelections,
   onSelectionChange,
   onDocumentContextReady,
@@ -69,7 +68,6 @@ export function PdfViewer({
   const [renderTick, setRenderTick] = useState(0);
   const [pageLayouts, setPageLayouts] = useState<Record<number, { top: number; left: number; width: number; height: number }>>({});
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const activeOverlay = selection;
   const zoomLevels = useMemo(() => [1, 1.25, 1.5, 2], []);
 
   function onDocumentLoadSuccess(document: LoadedDocumentProxy) {
@@ -125,6 +123,11 @@ export function PdfViewer({
   useEffect(() => {
     let frameId = 0;
 
+    const scheduleMeasure = () => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(measurePages);
+    };
+
     const measurePages = () => {
       const container = containerRef.current;
       if (!container) {
@@ -152,12 +155,39 @@ export function PdfViewer({
       setPageLayouts(nextLayouts);
     };
 
-    frameId = window.requestAnimationFrame(measurePages);
-    window.addEventListener('resize', measurePages);
+    const resizeObserver =
+      typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(() => {
+            scheduleMeasure();
+          })
+        : null;
+
+    const container = containerRef.current;
+    if (container && resizeObserver) {
+      resizeObserver.observe(container);
+
+      Array.from(container.querySelectorAll<HTMLElement>('[data-page-number]')).forEach((pageElement) => {
+        resizeObserver.observe(pageElement);
+
+        const canvas = pageElement.querySelector('canvas');
+        if (canvas) {
+          resizeObserver.observe(canvas);
+        }
+
+        const textLayer = pageElement.querySelector('.react-pdf__Page__textContent');
+        if (textLayer instanceof HTMLElement) {
+          resizeObserver.observe(textLayer);
+        }
+      });
+    }
+
+    scheduleMeasure();
+    window.addEventListener('resize', scheduleMeasure);
 
     return () => {
       window.cancelAnimationFrame(frameId);
-      window.removeEventListener('resize', measurePages);
+      window.removeEventListener('resize', scheduleMeasure);
+      resizeObserver?.disconnect();
     };
   }, [file, numPages, renderTick, scale]);
 
@@ -284,34 +314,6 @@ export function PdfViewer({
         </div>
       )}
 
-      {activeOverlay && activeOverlay.normalizedRects.length > 0 && (
-        <div className="pointer-events-none absolute inset-0 z-20">
-          {(() => {
-            const pageLayout = pageLayouts[activeOverlay.pageNumber];
-            if (!pageLayout) {
-              return null;
-            }
-
-            return activeOverlay.normalizedRects.map((rect, index) => (
-              <div
-                key={`${activeOverlay.anchorId ?? activeOverlay.pageNumber}-${index}-${rect.top}-${rect.left}`}
-                className={`absolute rounded ring-1 ${
-                  selection
-                    ? 'bg-blue-300/40 ring-blue-400/30'
-                    : 'bg-cyan-200/45 ring-cyan-400/40'
-                }`}
-                style={{
-                  top: pageLayout.top + rect.top * pageLayout.height,
-                  left: pageLayout.left + rect.left * pageLayout.width,
-                  width: rect.width * pageLayout.width,
-                  height: rect.height * pageLayout.height,
-                }}
-              />
-            ));
-          })()}
-        </div>
-      )}
-
       <Document
         file={file}
         onLoadSuccess={onDocumentLoadSuccess}
@@ -398,9 +400,9 @@ function captureSelection(
       ? pageText.slice(selectionIndex + selectedText.length, contextEnd)
       : pageText.slice(contextCharBudget, contextEnd)
 
+  const filteredRects = collectSelectionRects(range, pageElement)
   const containerRect = container.getBoundingClientRect()
-  const rects = Array.from(range.getClientRects())
-    .filter((rect) => rect.width > 0 && rect.height > 0)
+  const rects = filteredRects
     .map((rect) => ({
       top: rect.top - containerRect.top + container.scrollTop,
       left: rect.left - containerRect.left + container.scrollLeft,
@@ -408,8 +410,7 @@ function captureSelection(
       height: rect.height,
     }))
 
-  const normalizedRects = Array.from(range.getClientRects())
-    .filter((rect) => rect.width > 0 && rect.height > 0)
+  const normalizedRects = filteredRects
     .map((rect) => ({
       top: clampRatio((rect.top - pageRect.top) / Math.max(1, pageRect.height)),
       left: clampRatio((rect.left - pageRect.left) / Math.max(1, pageRect.width)),
@@ -440,6 +441,83 @@ function captureSelection(
 
 function clampRatio(value: number) {
   return Math.max(0, Math.min(1, value));
+}
+
+function collectSelectionRects(range: Range, pageElement: HTMLElement) {
+  const textLayer =
+    pageElement.querySelector<HTMLElement>('.react-pdf__Page__textContent') ?? pageElement;
+  const walker = document.createTreeWalker(textLayer, NodeFilter.SHOW_TEXT);
+  const rects: Array<{ top: number; left: number; width: number; height: number }> = [];
+
+  while (walker.nextNode()) {
+    const textNode = walker.currentNode;
+    const textContent = textNode.textContent ?? '';
+
+    if (!textContent.trim() || !range.intersectsNode(textNode)) {
+      continue;
+    }
+
+    const nodeRange = document.createRange();
+    const endOffset = textContent.length;
+    const startOffset = textNode === range.startContainer ? range.startOffset : 0;
+    const limitedEndOffset = textNode === range.endContainer ? range.endOffset : endOffset;
+
+    if (limitedEndOffset <= startOffset) {
+      continue;
+    }
+
+    nodeRange.setStart(textNode, startOffset);
+    nodeRange.setEnd(textNode, limitedEndOffset);
+
+    rects.push(
+      ...Array.from(nodeRange.getClientRects())
+        .filter((rect) => rect.width > 0 && rect.height > 0)
+        .map((rect) => ({
+          top: rect.top,
+          left: rect.left,
+          width: rect.width,
+          height: rect.height,
+        })),
+    );
+  }
+
+  return mergeAdjacentRects(rects);
+}
+
+function mergeAdjacentRects(rects: Array<{ top: number; left: number; width: number; height: number }>) {
+  if (rects.length <= 1) {
+    return rects;
+  }
+
+  const sorted = [...rects].sort((left, right) =>
+    Math.abs(left.top - right.top) > 1 ? left.top - right.top : left.left - right.left,
+  );
+  const merged: typeof sorted = [];
+
+  for (const rect of sorted) {
+    const last = merged[merged.length - 1];
+
+    if (!last) {
+      merged.push({ ...rect });
+      continue;
+    }
+
+    const sameLine = Math.abs(last.top - rect.top) < Math.max(3, rect.height * 0.45);
+    const horizontalGap = rect.left - (last.left + last.width);
+    const compatibleHeight = Math.abs(last.height - rect.height) < Math.max(3, rect.height * 0.45);
+
+    if (sameLine && compatibleHeight && horizontalGap <= 6) {
+      const rightEdge = Math.max(last.left + last.width, rect.left + rect.width);
+      last.top = Math.min(last.top, rect.top);
+      last.height = Math.max(last.height, rect.height);
+      last.width = rightEdge - last.left;
+      continue;
+    }
+
+    merged.push({ ...rect });
+  }
+
+  return merged;
 }
 
 function getHighlightColorClasses(color: HighlightColor) {
