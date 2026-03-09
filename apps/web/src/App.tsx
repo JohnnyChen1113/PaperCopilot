@@ -48,10 +48,41 @@ const chatSessionsStorageKey = 'papercopilot:chat-sessions';
 const highlightsStorageKey = 'papercopilot:highlights';
 const notesStorageKey = 'papercopilot:notes';
 const highlightColorStorageKey = 'papercopilot:highlight-color';
-const apiBasePath = '/api/';
+function getApiCandidates(path: string) {
+  const normalizedPath = path.replace(/^\/?api\//, '');
+  const candidates = ['/api/'];
 
-function withApiPath(path: string) {
-  return `${apiBasePath}${path.replace(/^\/?api\//, '')}`;
+  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/PaperCopilot')) {
+    candidates.unshift('/PaperCopilot/api/');
+  }
+
+  return Array.from(
+    new Set(candidates.map((base) => `${base}${normalizedPath}`)),
+  );
+}
+
+async function fetchWithApiFallback(path: string, init?: RequestInit) {
+  let lastError: Error | null = null;
+
+  for (const candidate of getApiCandidates(path)) {
+    try {
+      const response = await fetch(candidate, init);
+
+      if (response.status === 404 || response.status === 405) {
+        continue;
+      }
+
+      return response;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('网络请求失败。');
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+
+  throw new Error('无法连接到服务端接口。');
 }
 
 async function parseJsonResponse<T>(response: Response): Promise<T> {
@@ -444,7 +475,7 @@ function App() {
     }
 
     try {
-      const response = await fetch(withApiPath('/api/title'), {
+      const response = await fetchWithApiFallback('/api/title', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -558,7 +589,7 @@ function App() {
         maxTokens: settings.maxTokens,
       };
 
-      const response = await fetch(withApiPath('/api/chat'), {
+      const response = await fetchWithApiFallback('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -704,7 +735,7 @@ function App() {
     setModelFetchError(null);
 
     try {
-      const response = await fetch(withApiPath('/api/models'), {
+      const response = await fetchWithApiFallback('/api/models', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
