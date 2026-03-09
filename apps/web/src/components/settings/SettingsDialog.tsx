@@ -79,6 +79,7 @@ export function SettingsDialog({
             <div className="mt-4 grid gap-3">
               {providerOptionList.map((option) => {
                 const isActive = option.id === settings.provider;
+                const optionVisual = getProviderVisual(option.id as ProviderType);
 
                 return (
                   <button
@@ -92,9 +93,17 @@ export function SettingsDialog({
                     }`}
                   >
                     <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900">{option.label}</p>
-                        <p className="mt-1 text-xs text-slate-500">{option.description}</p>
+                      <div className="flex min-w-0 items-center gap-3">
+                        <BrandAvatar
+                          label={optionVisual.label}
+                          iconSrc={optionVisual.iconSrc}
+                          className={optionVisual.className}
+                          size="sm"
+                        />
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-slate-900">{option.label}</p>
+                          <p className="mt-1 text-xs text-slate-500">{option.description}</p>
+                        </div>
                       </div>
                       <span
                         className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${

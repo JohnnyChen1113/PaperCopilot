@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 type BrandAvatarProps = {
   label: string;
   iconSrc?: string;
@@ -17,15 +19,19 @@ export function BrandAvatar({
   className,
   size = 'md',
 }: BrandAvatarProps) {
+  const [failedIconSrc, setFailedIconSrc] = useState<string | null>(null);
+
   return (
     <span
       className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-xl ring-1 ${sizeClassName[size]} ${className}`}
     >
-      {iconSrc ? (
+      {iconSrc && failedIconSrc !== iconSrc ? (
         <img
           src={iconSrc}
           alt={label}
-          className="h-full w-full object-contain p-1"
+          className="block h-full w-full object-contain p-1"
+          onError={() => setFailedIconSrc(iconSrc)}
+          draggable={false}
         />
       ) : (
         label
