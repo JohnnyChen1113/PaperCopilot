@@ -1,0 +1,11 @@
+.git
+.github
+node_modules
+apps/web/node_modules
+apps/proxy/node_modules
+dist
+apps/web/dist
+apps/proxy/dist
+.turbo
+.DS_Store
+API_KEYS.md
