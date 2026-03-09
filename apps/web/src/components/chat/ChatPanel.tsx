@@ -1,8 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { History, Loader2, Send } from 'lucide-react';
-import { paperQuickActions, selectionQuickActions } from '../../lib/chatActions';
+import rehypeKatex from 'rehype-katex';
+import remarkMath from 'remark-math';
+import { BookText, Highlighter, History, Languages, Lightbulb, Loader2, NotebookPen, Send } from 'lucide-react';
+import { paperQuickActions, selectionMenuActions, selectionQuickActions } from '../../lib/chatActions';
 import type { ChatMessage, ChatSession } from '../../types';
+import type { HighlightColor } from '../reader/PdfViewer';
 
 type SelectionPreview = {
   pageNumber: number;
@@ -16,15 +19,31 @@ interface ChatPanelProps {
   hasValidSettings: boolean;
   isFileLoaded: boolean;
   selection: SelectionPreview | null;
+  notes: Array<{
+    id: string;
+    content: string;
+    createdAt: number;
+    updatedAt: number;
+    selection: SelectionPreview;
+  }>;
+  activeTab: 'assistant' | 'notes';
+  noteDraft: string;
   chatSessions: ChatSession[];
   activeChatId: string | null;
   chatMessages: ChatMessage[];
   chatStatus: 'idle' | 'streaming' | 'error';
   chatError: string | null;
+  highlightColor: HighlightColor;
   onSendMessage: (content: string) => void;
   onQuickAction: (actionPrompt: string) => void;
+  onSelectionAction: (actionId: string) => void;
+  onHighlightColorChange: (color: HighlightColor) => void;
   onClearSelection: () => void;
   onOpenSettings: () => void;
+  onTabChange: (tab: 'assistant' | 'notes') => void;
+  onNoteDraftChange: (value: string) => void;
+  onSaveNote: () => void;
+  onSelectNote: (noteId: string) => void;
   onNewChat: () => void;
   onSelectChat: (chatId: string) => void;
 }
@@ -34,30 +53,46 @@ export function ChatPanel({
   hasValidSettings,
   isFileLoaded,
   selection,
+  notes,
+  activeTab,
+  noteDraft,
   chatSessions,
   activeChatId,
   chatMessages,
   chatStatus,
   chatError,
+  highlightColor,
   onSendMessage,
   onQuickAction,
+  onSelectionAction,
+  onHighlightColorChange,
   onClearSelection,
   onOpenSettings,
+  onTabChange,
+  onNoteDraftChange,
+  onSaveNote,
+  onSelectNote,
   onNewChat,
   onSelectChat,
 }: ChatPanelProps) {
   const [inputValue, setInputValue] = useState('');
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const shouldAutoScrollRef = useRef(true);
 
-  // Auto-scroll to bottom whenever messages change
   useEffect(() => {
+    if (!shouldAutoScrollRef.current) {
+      return;
+    }
+
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
 
   const isStreaming = chatStatus === 'streaming';
   const canSend =
     inputValue.trim().length > 0 && !isStreaming && hasValidSettings && isFileLoaded;
+  const canSaveNote = Boolean(selection && noteDraft.trim().length > 0);
 
   function handleSend() {
     if (!canSend) return;
@@ -84,6 +119,17 @@ export function ChatPanel({
     el.style.height = `${Math.min(el.scrollHeight, 112)}px`; // ~4 rows at ~28px each
   }
 
+  function handleScroll() {
+    const container = scrollContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    shouldAutoScrollRef.current = distanceFromBottom < 80;
+  }
+
   return (
     <div className="flex h-full flex-col bg-slate-50">
       {/* Header */}
@@ -106,6 +152,38 @@ export function ChatPanel({
               新对话
             </button>
           </div>
+        </div>
+
+        <div className="mt-4 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onTabChange('assistant')}
+            className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium transition ${
+              activeTab === 'assistant'
+                ? 'bg-slate-900 text-white'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            <BookText className="h-4 w-4" />
+            Assistant
+          </button>
+          <button
+            type="button"
+            onClick={() => onTabChange('notes')}
+            className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium transition ${
+              activeTab === 'notes'
+                ? 'bg-slate-900 text-white'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            <NotebookPen className="h-4 w-4" />
+            My Notes
+            {notes.length > 0 && (
+              <span className={`rounded-full px-1.5 py-0.5 text-[11px] ${activeTab === 'notes' ? 'bg-white/20 text-white' : 'bg-white text-slate-600'}`}>
+                {notes.length}
+              </span>
+            )}
+          </button>
         </div>
 
         {chatSessions.length > 0 && (
@@ -146,30 +224,8 @@ export function ChatPanel({
       </div>
 
       {/* Scrollable content area */}
-      <div className="flex-1 overflow-y-auto">
+      <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         <div className="flex flex-col gap-4 p-5">
-          {/* Selection preview card */}
-          {selection && (
-            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                  第 {selection.pageNumber} 页 · 当前选段
-                </p>
-                <button
-                  onClick={onClearSelection}
-                  aria-label="Clear selected passage"
-                  className="text-xs font-medium text-slate-500 transition-colors hover:text-slate-900"
-                >
-                  清除
-                </button>
-              </div>
-              <blockquote className="mt-3 rounded-lg bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700 border-l-2 border-slate-300">
-                {selection.selectedText}
-              </blockquote>
-            </div>
-          )}
-
-          {/* Empty states */}
           {!isFileLoaded ? (
             <EmptyState
               title="还没有加载 PDF"
@@ -182,13 +238,22 @@ export function ChatPanel({
               actionLabel="打开设置"
               onAction={onOpenSettings}
             />
-          ) : chatMessages.length === 0 ? (
+          ) : activeTab === 'assistant' && chatMessages.length === 0 ? (
             <EmptyState
               title={selection ? '选择一个快捷动作，或直接提问' : '先选一段文字，或直接提问'}
               description={
                 selection
                   ? '可以直接点下面的快捷动作，也可以自己输入问题。'
                   : '你可以在 PDF 里选中一段，也可以直接输入任何关于论文的问题。'
+              }
+            />
+          ) : activeTab === 'notes' && notes.length === 0 ? (
+            <EmptyState
+              title={selection ? '为当前选段写一条笔记' : '先选中一段文本再记笔记'}
+              description={
+                selection
+                  ? '笔记会和当前选中的内容绑定，并保存在本地浏览器里。'
+                  : '在左侧选中文本后，可以在这里写下你的理解、疑问或结论。'
               }
             />
           ) : null}
@@ -201,12 +266,23 @@ export function ChatPanel({
           )}
 
           {/* Messages list */}
-          {chatMessages.map((msg, index) => {
+          {activeTab === 'assistant' &&
+            chatMessages.map((msg, index) => {
             const isLast = index === chatMessages.length - 1;
             if (msg.role === 'user') {
               return (
                 <div key={msg.id} className="flex justify-end">
-                  <div className="max-w-[80%] rounded-2xl rounded-tr-sm bg-slate-200 px-4 py-2.5 text-sm text-slate-900 leading-6 whitespace-pre-wrap">
+                  <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-slate-200 px-4 py-2.5 text-sm text-slate-900 leading-6 whitespace-pre-wrap">
+                    {msg.quote && (
+                      <div className="mb-3 rounded-xl border border-slate-300 bg-white/70 px-3 py-2 text-left">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                          第 {msg.quote.pageNumber} 页引用
+                        </p>
+                        <blockquote className="mt-2 border-l-2 border-slate-300 pl-3 text-slate-600">
+                          {compactQuote(msg.quote.selectedText, 140, 36)}
+                        </blockquote>
+                      </div>
+                    )}
                     {msg.content}
                   </div>
                 </div>
@@ -216,7 +292,9 @@ export function ChatPanel({
             return (
               <div key={msg.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="markdown-content">
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                    {msg.content}
+                  </ReactMarkdown>
                 </div>
                 {isLast && isStreaming && (
                   <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-400">
@@ -226,7 +304,38 @@ export function ChatPanel({
                 )}
               </div>
             );
-          })}
+            })}
+
+          {activeTab === 'notes' && notes.map((note) => (
+            <button
+              key={note.id}
+              type="button"
+              onClick={() => onSelectNote(note.id)}
+              className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                  第 {note.selection.pageNumber} 页
+                </p>
+                <p className="text-xs text-slate-400">
+                  {new Date(note.updatedAt).toLocaleString('zh-CN', {
+                    month: 'numeric',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </p>
+              </div>
+              <blockquote className="mt-3 rounded-lg border-l-2 border-amber-300 bg-amber-50 px-4 py-3 text-sm leading-6 text-slate-700">
+                {note.selection.selectedText}
+              </blockquote>
+              <div className="markdown-content mt-3">
+                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                  {note.content}
+                </ReactMarkdown>
+              </div>
+            </button>
+          ))}
 
           {/* Scroll anchor */}
           <div ref={messagesEndRef} />
@@ -234,16 +343,20 @@ export function ChatPanel({
       </div>
 
       {/* Quick actions + input area */}
-      <div className="border-t border-slate-200 bg-white px-5 py-4 space-y-2">
+      <div className="border-t border-slate-200 bg-white px-5 py-4 space-y-3">
         {/* Selection-based quick actions */}
-        {selection && (
-            <div className="flex flex-wrap gap-1.5">
+        {selection && activeTab === 'assistant' && (
+          <div className="flex flex-wrap gap-1.5">
             <span className="self-center text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400 mr-0.5">选段</span>
             {selectionQuickActions.map((action) => (
               <button
                 key={action.id}
-                onClick={() => onQuickAction(action.prompt)}
-                disabled={isStreaming}
+                onClick={() => {
+                  if (action.prompt) {
+                    onQuickAction(action.prompt);
+                  }
+                }}
+                disabled={isStreaming || !action.prompt}
                 className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {action.label}
@@ -253,14 +366,18 @@ export function ChatPanel({
         )}
 
         {/* Paper-level quick actions (always available) */}
-        {isFileLoaded && hasValidSettings && (
+        {isFileLoaded && hasValidSettings && activeTab === 'assistant' && (
           <div className="flex flex-wrap gap-1.5">
             <span className="self-center text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400 mr-0.5">整篇</span>
             {paperQuickActions.map((action) => (
               <button
                 key={action.id}
-                onClick={() => onSendMessage(action.prompt)}
-                disabled={isStreaming}
+                onClick={() => {
+                  if (action.prompt) {
+                    onSendMessage(action.prompt);
+                  }
+                }}
+                disabled={isStreaming || !action.prompt}
                 className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {action.label}
@@ -269,34 +386,117 @@ export function ChatPanel({
           </div>
         )}
 
-        {/* Input row */}
-        <div className="flex items-end gap-2">
-          <textarea
-            ref={textareaRef}
-            rows={1}
-            value={inputValue}
-            onChange={handleTextareaChange}
-            onKeyDown={handleKeyDown}
-            disabled={isStreaming}
-            placeholder={
-              !isFileLoaded
-                ? '先加载一篇 PDF…'
-                : !hasValidSettings
-                  ? '先完成模型设置…'
-                  : '输入你的问题…（Enter 发送，Shift+Enter 换行）'
-            }
-            style={{ resize: 'none', overflow: 'hidden' }}
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-          />
-          <button
-            onClick={handleSend}
-            disabled={!canSend}
-            aria-label="Send message"
-            className="shrink-0 flex h-[38px] w-[38px] items-center justify-center rounded-md bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-          >
-            <Send className="h-4 w-4" />
-          </button>
-        </div>
+        {activeTab === 'assistant' ? (
+          <div className="space-y-2">
+            {selection && (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                    第 {selection.pageNumber} 页 · 将作为本轮引用发送
+                  </p>
+                  <button
+                    type="button"
+                    onClick={onClearSelection}
+                    className="text-[11px] font-medium text-slate-500 transition hover:text-slate-900"
+                  >
+                    清除
+                  </button>
+                </div>
+                <blockquote className="mt-2 border-l-2 border-slate-300 pl-3 text-sm leading-6 text-slate-600">
+                  {compactQuote(selection.selectedText, 160, 40)}
+                </blockquote>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {selectionMenuActions.map((action) => (
+                    <button
+                      key={action.id}
+                      type="button"
+                      onClick={() => onSelectionAction(action.id)}
+                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
+                    >
+                      <SelectionActionIcon actionId={action.id} />
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-3 flex items-center gap-2">
+                  <span className="text-[11px] font-medium text-slate-500">高亮颜色</span>
+                  {highlightColorOptions.map((option) => {
+                    const isActive = option.id === highlightColor;
+
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => onHighlightColorChange(option.id)}
+                        className={`h-6 w-6 rounded-full border-2 transition ${
+                          isActive
+                            ? 'scale-110 border-slate-900 shadow-sm'
+                            : 'border-white/80 hover:scale-105 hover:border-slate-300'
+                        } ${option.className}`}
+                        aria-label={`切换到${option.label}高亮`}
+                        title={option.label}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <div className="flex items-end gap-2">
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={inputValue}
+                onChange={handleTextareaChange}
+                onKeyDown={handleKeyDown}
+                disabled={isStreaming}
+                placeholder={
+                  !isFileLoaded
+                    ? '先加载一篇 PDF…'
+                    : !hasValidSettings
+                      ? '先完成模型设置…'
+                      : selection
+                        ? '围绕当前选段继续提问…'
+                        : '输入你的问题…（Enter 发送，Shift+Enter 换行）'
+                }
+                style={{ resize: 'none', overflow: 'hidden' }}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+              />
+              <button
+                onClick={handleSend}
+                disabled={!canSend}
+                aria-label="Send message"
+                className="shrink-0 flex h-[38px] w-[38px] items-center justify-center rounded-md bg-blue-600 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+              >
+                <Send className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <textarea
+              rows={6}
+              value={noteDraft}
+              onChange={(event) => onNoteDraftChange(event.target.value)}
+              placeholder={
+                selection
+                  ? '写下你对这段内容的理解、疑问或总结…'
+                  : '先在左侧选中一段文本，然后在这里记笔记。'
+              }
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-amber-400 focus:ring-4 focus:ring-amber-100"
+            />
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={onSaveNote}
+                disabled={!canSaveNote}
+                className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                <NotebookPen className="h-4 w-4" />
+                保存笔记
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -335,3 +535,40 @@ function EmptyState({
     </div>
   );
 }
+
+function SelectionActionIcon({ actionId }: { actionId: string }) {
+  switch (actionId) {
+    case 'ask-ai':
+      return <Lightbulb className="h-3.5 w-3.5 text-amber-500" />;
+    case 'translate-zh':
+      return <Languages className="h-3.5 w-3.5 text-emerald-500" />;
+    case 'highlight':
+      return <Highlighter className="h-3.5 w-3.5 text-amber-600" />;
+    case 'note':
+      return <NotebookPen className="h-3.5 w-3.5 text-violet-500" />;
+    default:
+      return <BookText className="h-3.5 w-3.5 text-slate-500" />;
+  }
+}
+
+function compactQuote(text: string, maxLength = 180, tailLength = 48) {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  const headLength = Math.max(24, maxLength - tailLength - 3);
+  return `${normalized.slice(0, headLength)}...${normalized.slice(-tailLength)}`;
+}
+
+const highlightColorOptions: Array<{
+  id: HighlightColor;
+  label: string;
+  className: string;
+}> = [
+  { id: 'yellow', label: '黄色', className: 'bg-amber-300' },
+  { id: 'green', label: '绿色', className: 'bg-emerald-300' },
+  { id: 'blue', label: '蓝色', className: 'bg-sky-300' },
+  { id: 'pink', label: '粉色', className: 'bg-pink-300' },
+];

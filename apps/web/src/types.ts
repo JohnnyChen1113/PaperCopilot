@@ -22,6 +22,10 @@ export type ChatMessage = {
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
+  quote?: {
+    pageNumber: number;
+    selectedText: string;
+  };
 };
 
 export type ChatSession = {

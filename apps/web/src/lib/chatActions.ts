@@ -1,8 +1,27 @@
 export type QuickAction = {
   id: string;
   label: string;
-  prompt: string;
+  prompt?: string;
 };
+
+export const selectionMenuActions: QuickAction[] = [
+  {
+    id: 'ask-ai',
+    label: '问 AI',
+  },
+  {
+    id: 'translate-zh',
+    label: '快捷翻译',
+  },
+  {
+    id: 'highlight',
+    label: '高亮',
+  },
+  {
+    id: 'note',
+    label: '记笔记',
+  },
+];
 
 export const selectionQuickActions: QuickAction[] = [
   {

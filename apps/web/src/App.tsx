@@ -1,7 +1,12 @@
 import { useEffect, useEffectEvent, useState } from 'react';
 import { TopBar } from './components/layout/TopBar';
 import { SplitPane } from './components/layout/SplitPane';
-import { PdfViewer, type PdfSelectionPayload } from './components/reader/PdfViewer';
+import {
+  PdfViewer,
+  type HighlightColor,
+  type HighlightRecord,
+  type PdfSelectionPayload,
+} from './components/reader/PdfViewer';
 import { ChatPanel } from './components/chat/ChatPanel';
 import { SettingsDialog } from './components/settings/SettingsDialog';
 import { providerPresets } from './lib/providers';
@@ -20,12 +25,29 @@ type DocumentContext = {
   abstract: string;
   overview: string;
 };
+type LegacyHighlightRecord = {
+  id: string;
+  paperName: string;
+  selection: PdfSelectionPayload;
+  createdAt: number;
+};
+type NoteRecord = {
+  id: string;
+  paperName: string;
+  selection: PdfSelectionPayload;
+  createdAt: number;
+  content: string;
+  updatedAt: number;
+};
 
 const settingsStorageKey = 'papercopilot:model-settings';
 const apiKeysStorageKey = 'papercopilot:api-keys';
 const selectedModelsStorageKey = 'papercopilot:selected-models';
 const configuredModelsStorageKey = 'papercopilot:configured-models';
 const chatSessionsStorageKey = 'papercopilot:chat-sessions';
+const highlightsStorageKey = 'papercopilot:highlights';
+const notesStorageKey = 'papercopilot:notes';
+const highlightColorStorageKey = 'papercopilot:highlight-color';
 const apiBasePath = import.meta.env.VITE_API_BASE_PATH || '/api/';
 
 function withApiPath(path: string) {
@@ -90,6 +112,61 @@ function loadChatSessions() {
   } catch {
     return [];
   }
+}
+
+function loadHighlights() {
+  try {
+    const raw = localStorage.getItem(highlightsStorageKey);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Array<HighlightRecord | LegacyHighlightRecord>;
+
+    return parsed.flatMap((item) => {
+      if ('color' in item && Array.isArray(item.rects)) {
+        return [item as HighlightRecord];
+      }
+
+      if (!('selection' in item) || !item.selection?.normalizedRects?.length) {
+        return [];
+      }
+
+      return [
+        {
+          id: item.id,
+          paperName: item.paperName,
+          pageNumber: item.selection.pageNumber,
+          selectedText: item.selection.selectedText,
+          color: 'yellow' as HighlightColor,
+          rects: item.selection.normalizedRects,
+          createdAt: item.createdAt,
+        },
+      ];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function loadNotes() {
+  try {
+    const raw = localStorage.getItem(notesStorageKey);
+    if (!raw) return [];
+    return JSON.parse(raw) as NoteRecord[];
+  } catch {
+    return [];
+  }
+}
+
+function loadHighlightColor(): HighlightColor {
+  try {
+    const raw = localStorage.getItem(highlightColorStorageKey);
+    if (raw === 'yellow' || raw === 'green' || raw === 'blue' || raw === 'pink') {
+      return raw;
+    }
+  } catch {
+    // ignore invalid persisted color
+  }
+
+  return 'yellow';
 }
 
 function createChatSession(paperName: string): ChatSession {
@@ -214,6 +291,11 @@ function App() {
   const [modelFetchError, setModelFetchError] = useState<string | null>(null);
   const [documentContext, setDocumentContext] = useState<DocumentContext | null>(null);
   const [configuredModels, setConfiguredModels] = useState<ConfiguredModelsStore>(loadInitialConfiguredModels);
+  const [activeRightTab, setActiveRightTab] = useState<'assistant' | 'notes'>('assistant');
+  const [noteDraft, setNoteDraft] = useState('');
+  const [highlights, setHighlights] = useState<HighlightRecord[]>(loadHighlights);
+  const [notes, setNotes] = useState<NoteRecord[]>(loadNotes);
+  const [highlightColor, setHighlightColor] = useState<HighlightColor>(loadHighlightColor);
 
   // Save non-key settings to papercopilot:model-settings (strip apiKey)
   useEffect(() => {
@@ -255,6 +337,18 @@ function App() {
     localStorage.setItem(chatSessionsStorageKey, JSON.stringify(chatSessions));
   }, [chatSessions]);
 
+  useEffect(() => {
+    localStorage.setItem(highlightsStorageKey, JSON.stringify(highlights));
+  }, [highlights]);
+
+  useEffect(() => {
+    localStorage.setItem(notesStorageKey, JSON.stringify(notes));
+  }, [notes]);
+
+  useEffect(() => {
+    localStorage.setItem(highlightColorStorageKey, highlightColor);
+  }, [highlightColor]);
+
   const settingsReady = Boolean(settings.baseUrl.trim() && settings.model.trim() && settings.apiKey.trim());
   const currentProviderConfiguredModels = configuredModels[settings.provider] ?? [];
   const currentPaperSessions = file
@@ -264,6 +358,14 @@ function App() {
     : [];
   const activeChat = currentPaperSessions.find((session) => session.id === activeChatId) ?? null;
   const chatMessages = activeChat?.messages ?? [];
+  const currentPaperHighlights = file
+    ? highlights.filter((highlight) => highlight.paperName === file.name)
+    : [];
+  const currentPaperNotes = file
+    ? notes
+        .filter((note) => note.paperName === file.name)
+        .sort((left, right) => right.updatedAt - left.updatedAt)
+    : [];
 
   const handleFileSelect = () => {
     const input = document.createElement('input');
@@ -385,8 +487,10 @@ function App() {
     } else if (documentContext?.overview) {
       systemPrompt += `\n\n论文内容节选：\n${documentContext.overview}`;
     }
-    if (selection) {
-      systemPrompt += `\n\n用户当前正在阅读这篇论文《${file.name}》中第 ${selection.pageNumber} 页的这段内容：\n\n「${selection.selectedText}」\n\n前文上下文：${selection.contextBefore || '无'}\n后文上下文：${selection.contextAfter || '无'}`;
+    const currentSelection = selection;
+
+    if (currentSelection) {
+      systemPrompt += `\n\n用户当前正在阅读这篇论文《${file.name}》中第 ${currentSelection.pageNumber} 页的这段内容：\n\n「${currentSelection.selectedText}」\n\n前文上下文：${currentSelection.contextBefore || '无'}\n后文上下文：${currentSelection.contextAfter || '无'}`;
     }
 
     // Append user message
@@ -395,6 +499,12 @@ function App() {
       role: 'user',
       content: userContent,
       timestamp: Date.now(),
+      quote: currentSelection
+        ? {
+            pageNumber: currentSelection.pageNumber,
+            selectedText: currentSelection.selectedText,
+          }
+        : undefined,
     };
     const targetSession = ensureActiveChatSession(file.name);
     const messagesWithUser = [...targetSession.messages, userMsg];
@@ -403,6 +513,9 @@ function App() {
       messages: messagesWithUser,
       updatedAt: Date.now(),
     }));
+    if (currentSelection) {
+      setSelection(null);
+    }
     setChatStatus('streaming');
     setChatError(null);
 
@@ -473,7 +586,96 @@ function App() {
 
   function handleQuickAction(actionPrompt: string) {
     if (!selection) return;
+    setActiveRightTab('assistant');
     void handleChat(actionPrompt);
+  }
+
+  function buildSelectionFingerprint(nextSelection: PdfSelectionPayload) {
+    const firstRect = nextSelection.normalizedRects[0];
+    return `${nextSelection.pageNumber}:${normalizeSelectionText(nextSelection.selectedText)}:${Math.round((firstRect?.top ?? 0) * 1000)}:${Math.round((firstRect?.left ?? 0) * 1000)}`;
+  }
+
+  function saveHighlight(nextSelection: PdfSelectionPayload, color: HighlightColor) {
+    if (!file) {
+      return;
+    }
+
+    const fingerprint = buildSelectionFingerprint(nextSelection);
+    setHighlights((current) => {
+      const existingIndex = current.findIndex(
+        (item) =>
+          item.paperName === file.name &&
+          buildStoredHighlightFingerprint(item) === fingerprint,
+      );
+
+      if (existingIndex >= 0) {
+        return current.map((item, index) =>
+          index === existingIndex
+            ? {
+                ...item,
+                color,
+                selectedText: nextSelection.selectedText,
+                rects: nextSelection.normalizedRects,
+              }
+            : item,
+        );
+      }
+
+      return [{
+        id: crypto.randomUUID(),
+        paperName: file.name,
+        pageNumber: nextSelection.pageNumber,
+        selectedText: nextSelection.selectedText,
+        color,
+        rects: nextSelection.normalizedRects,
+        createdAt: Date.now(),
+      }, ...current];
+    });
+  }
+
+  function handleSelectionAction(actionId: string) {
+    if (!selection) {
+      return;
+    }
+
+    switch (actionId) {
+      case 'ask-ai':
+        setActiveRightTab('assistant');
+        return;
+      case 'translate-zh':
+        setActiveRightTab('assistant');
+        void handleChat('请把这段内容翻译成中文，并尽量准确保留专业术语原文。');
+        return;
+      case 'highlight':
+        saveHighlight(selection, highlightColor);
+        setSelection(null);
+        return;
+      case 'note':
+        setActiveRightTab('notes');
+        return;
+      default:
+        return;
+    }
+  }
+
+  function saveCurrentNote() {
+    if (!file || !selection || !noteDraft.trim()) {
+      return;
+    }
+
+    const now = Date.now();
+    const note: NoteRecord = {
+      id: crypto.randomUUID(),
+      paperName: file.name,
+      selection,
+      content: noteDraft.trim(),
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    setNotes((current) => [note, ...current]);
+    saveHighlight(selection, highlightColor);
+    setNoteDraft('');
   }
 
   async function runRefreshModels() {
@@ -562,10 +764,18 @@ function App() {
     setActiveChatId(latestSession?.id ?? null);
     setChatStatus('idle');
     setChatError(null);
+    setActiveRightTab('assistant');
+    setNoteDraft('');
   }
 
   function handleSelectionChange(nextSelection: PdfSelectionPayload | null) {
     setSelection(nextSelection);
+    if (nextSelection) {
+      setActiveRightTab('assistant');
+    }
+    if (!nextSelection && activeRightTab === 'notes') {
+      setNoteDraft('');
+    }
   }
 
   function updateSettings<K extends keyof SettingsState>(key: K, value: SettingsState[K]) {
@@ -691,12 +901,9 @@ function App() {
             file={file}
             contextCharBudget={settings.contextCharBudget}
             selection={selection}
+            highlightedSelections={currentPaperHighlights}
             onSelectionChange={handleSelectionChange}
             onDocumentContextReady={setDocumentContext}
-            onQuickAction={(prompt) => {
-              handleQuickAction(prompt);
-            }}
-            actionDisabled={chatStatus === 'streaming'}
             onOpenFile={handleFileSelect}
             onFileDrop={applyFile}
           />
@@ -707,6 +914,15 @@ function App() {
             hasValidSettings={settingsReady}
             isFileLoaded={Boolean(file)}
             selection={selection}
+            notes={currentPaperNotes.map((note) => ({
+              id: note.id,
+              content: note.content,
+              createdAt: note.createdAt,
+              updatedAt: note.updatedAt,
+              selection: note.selection,
+            }))}
+            activeTab={activeRightTab}
+            noteDraft={noteDraft}
             chatSessions={currentPaperSessions}
             activeChatId={activeChat?.id ?? null}
             chatMessages={chatMessages}
@@ -714,8 +930,23 @@ function App() {
             chatError={chatError}
             onSendMessage={(content) => { void handleChat(content); }}
             onQuickAction={(prompt) => { handleQuickAction(prompt); }}
+            onSelectionAction={handleSelectionAction}
+            highlightColor={highlightColor}
+            onHighlightColorChange={setHighlightColor}
             onClearSelection={() => setSelection(null)}
             onOpenSettings={() => setIsSettingsOpen(true)}
+            onTabChange={setActiveRightTab}
+            onNoteDraftChange={setNoteDraft}
+            onSaveNote={saveCurrentNote}
+            onSelectNote={(noteId) => {
+              const targetNote = currentPaperNotes.find((note) => note.id === noteId);
+              if (!targetNote) {
+                return;
+              }
+              setActiveRightTab('notes');
+              setSelection(targetNote.selection);
+              setNoteDraft(targetNote.content);
+            }}
             onNewChat={() => {
               if (!file) {
                 return;
@@ -756,3 +987,12 @@ function App() {
 }
 
 export default App;
+
+function normalizeSelectionText(value: string) {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 220);
+}
+
+function buildStoredHighlightFingerprint(highlight: HighlightRecord) {
+  const firstRect = highlight.rects[0];
+  return `${highlight.pageNumber}:${normalizeSelectionText(highlight.selectedText)}:${Math.round((firstRect?.top ?? 0) * 1000)}:${Math.round((firstRect?.left ?? 0) * 1000)}`;
+}
